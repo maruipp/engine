@@ -29,7 +29,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceSoftware::AcquireFrame(
   // external view embedder may want to render to the root surface.
   if (!render_to_surface_) {
     return std::make_unique<SurfaceFrame>(
-        nullptr, [](const SurfaceFrame& surface_frame, SkCanvas* canvas) {
+        nullptr, true, [](const SurfaceFrame& surface_frame, SkCanvas* canvas) {
           return true;
         });
   }
@@ -57,8 +57,8 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceSoftware::AcquireFrame(
   canvas->resetMatrix();
 
   SurfaceFrame::SubmitCallback on_submit =
-      [self = weak_factory_.GetWeakPtr()](const SurfaceFrame& surface_frame,
-                                          SkCanvas* canvas) -> bool {
+      [self = weak_factory_.GetTaskRunnerAffineWeakPtr()](
+          const SurfaceFrame& surface_frame, SkCanvas* canvas) -> bool {
     // If the surface itself went away, there is nothing more to do.
     if (!self || !self->IsValid() || canvas == nullptr) {
       return false;
@@ -69,7 +69,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceSoftware::AcquireFrame(
     return self->delegate_->PresentBackingStore(surface_frame.SkiaSurface());
   };
 
-  return std::make_unique<SurfaceFrame>(backing_store, on_submit);
+  return std::make_unique<SurfaceFrame>(backing_store, true, on_submit);
 }
 
 // |Surface|

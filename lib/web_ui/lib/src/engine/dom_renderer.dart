@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @dart = 2.6
 part of engine;
 
 class DomRenderer {
@@ -61,6 +62,16 @@ class DomRenderer {
   /// transition appear smooth.
   static const String _staleHotRestartStore = '__flutter_state';
   List<html.Element> _staleHotRestartState;
+
+  /// Used to decide if the browser tab still has the focus.
+  ///
+  /// This information is useful for deciding on the blur behavior.
+  /// See [DefaultTextEditingStrategy].
+  ///
+  /// This getter calls the `hasFocus` method of the `Document` interface.
+  /// See for more details:
+  /// https://developer.mozilla.org/en-US/docs/Web/API/Document/hasFocus
+  bool get windowHasFocus => js_util.callMethod(html.document, 'hasFocus', <dynamic>[]);
 
   void _setupHotRestart() {
     // This persists across hot restarts to clear stale DOM.
@@ -205,7 +216,7 @@ class DomRenderer {
         ..name = 'theme-color';
       html.document.head.append(theme);
     }
-    theme.content = color.toCssString();
+    theme.content = colorToCssString(color);
   }
 
   static const String defaultFontStyle = 'normal';
@@ -220,7 +231,8 @@ class DomRenderer {
     _styleElement = html.StyleElement();
     html.document.head.append(_styleElement);
     final html.CssStyleSheet sheet = _styleElement.sheet;
-
+    final bool isWebKit = browserEngine == BrowserEngine.webkit;
+    final bool isFirefox = browserEngine == BrowserEngine.firefox;
     // TODO(butterfly): use more efficient CSS selectors; descendant selectors
     //                  are slow. More info:
     //
@@ -228,10 +240,19 @@ class DomRenderer {
 
     // This undoes browser's default layout attributes for paragraphs. We
     // compute paragraph layout ourselves.
-    sheet.insertRule('''
-flt-ruler-host p, flt-scene p {
-  margin: 0;
-}''', sheet.cssRules.length);
+    if (isFirefox) {
+      // For firefox set line-height, otherwise textx at same font-size will
+      // measure differently in ruler.
+      sheet.insertRule(
+          'flt-ruler-host p, flt-scene p '
+          '{ margin: 0; line-height: 100%;}',
+          sheet.cssRules.length);
+    } else {
+      sheet.insertRule(
+          'flt-ruler-host p, flt-scene p '
+          '{ margin: 0; }',
+          sheet.cssRules.length);
+    }
 
     // This undoes browser's default painting and layout attributes of range
     // input, which is used in semantics.
@@ -248,7 +269,7 @@ flt-semantics input[type=range] {
   left: 0;
 }''', sheet.cssRules.length);
 
-    if (browserEngine == BrowserEngine.webkit) {
+    if (isWebKit) {
       sheet.insertRule(
           'flt-semantics input[type=range]::-webkit-slider-thumb {'
           '  -webkit-appearance: none;'
@@ -256,9 +277,14 @@ flt-semantics input[type=range] {
           sheet.cssRules.length);
     }
 
-    if (browserEngine == BrowserEngine.firefox) {
+    if (isFirefox) {
       sheet.insertRule(
           'input::-moz-selection {'
+          '  background-color: transparent;'
+          '}',
+          sheet.cssRules.length);
+      sheet.insertRule(
+          'textarea::-moz-selection {'
           '  background-color: transparent;'
           '}',
           sheet.cssRules.length);
@@ -268,6 +294,11 @@ flt-semantics input[type=range] {
       // transparent.
       sheet.insertRule(
           'input::selection {'
+          '  background-color: transparent;'
+          '}',
+          sheet.cssRules.length);
+      sheet.insertRule(
+          'textarea::selection {'
           '  background-color: transparent;'
           '}',
           sheet.cssRules.length);
@@ -282,7 +313,7 @@ flt-semantics [contentEditable="true"] {
 
     // By default on iOS, Safari would highlight the element that's being tapped
     // on using gray background. This CSS rule disables that.
-    if (browserEngine == BrowserEngine.webkit) {
+    if (isWebKit) {
       sheet.insertRule('''
 flt-glass-pane * {
   -webkit-tap-highlight-color: transparent;
@@ -313,23 +344,12 @@ flt-glass-pane * {
     setElementStyle(bodyElement, 'touch-action', 'none');
 
     // These are intentionally outrageous font parameters to make sure that the
-    // apps fully specifies their text styles.
+    // apps fully specify their text styles.
     setElementStyle(bodyElement, 'font', defaultCssFont);
     setElementStyle(bodyElement, 'color', 'red');
 
-    // TODO(flutter_web): send the location during the scroll for more frequent
-    // location updates from the framework. Remove spellcheck=false property.
-    /// The spell check is being disabled for now.
-    ///
-    /// Flutter web is positioning the input box on top of editable widget.
-    /// This location is updated only in the paint phase of the widget.
-    /// It is wrong during the scroll. It is not important for text editing
-    /// since the content is already invisible. On the other hand, the red
-    /// indicator for spellcheck gets confusing due to the wrong positioning.
-    /// We are disabling spellcheck until the location starts getting updated
-    /// via scroll. This is possible since we can listen to the scroll on
-    /// Flutter.
-    /// See [HybridTextEditing].
+    // TODO(flutter_web): Disable spellcheck until changes in the framework and
+    // engine are complete.
     bodyElement.spellcheck = false;
 
     for (html.Element viewportMeta
@@ -380,26 +400,39 @@ flt-glass-pane * {
 
     _glassPaneElement.append(_sceneHostElement);
 
-    EngineSemanticsOwner.instance.autoEnableOnTap(this);
-    PointerBinding(this);
+    final html.Element _accesibilityPlaceholder = EngineSemanticsOwner
+        .instance.semanticsHelper
+        .prepareAccesibilityPlaceholder();
+
+    // Insert the semantics placeholder after the scene host. For all widgets
+    // in the scene, except for platform widgets, the scene host will pass the
+    // pointer events through to the semantics tree. However, for platform
+    // views, the pointer events will not pass through, and will be handled
+    // by the platform view.
+    glassPaneElement
+        .insertBefore(_accesibilityPlaceholder, _sceneHostElement);
+
+    PointerBinding.initInstance(_glassPaneElement);
 
     // Hide the DOM nodes used to render the scene from accessibility, because
     // the accessibility tree is built from the SemanticsNode tree as a parallel
     // DOM tree.
     setElementAttribute(_sceneHostElement, 'aria-hidden', 'true');
 
-    // We treat browser pixels as device pixels because pointer events,
-    // position, and sizes all use browser pixel as the unit (i.e. "px" in CSS).
-    // Therefore, as far as the framework is concerned the device pixel ratio
-    // is 1.0.
-    window.debugOverrideDevicePixelRatio(1.0);
-
-    if (browserEngine == BrowserEngine.webkit) {
+    if (html.window.visualViewport == null && isWebKit) {
       // Safari sometimes gives us bogus innerWidth/innerHeight values when the
       // page loads. When it changes the values to correct ones it does not
       // notify of the change via `onResize`. As a workaround, we setup a
       // temporary periodic timer that polls innerWidth and triggers the
       // resizeListener so that the framework can react to the change.
+      //
+      // Safari 13 has implemented visualViewport API so it doesn't need this
+      // timer.
+      //
+      // VisualViewport API is not enabled in Firefox as well. On the other hand
+      // Firefox returns correct values for innerHeight, innerWidth.
+      // Firefox also triggers html.window.onResize therefore we don't need this
+      // timer setup for Firefox.
       final int initialInnerWidth = html.window.innerWidth;
       // Counts how many times we checked screen size. We check up to 5 times.
       int checkCount = 0;
@@ -423,13 +456,32 @@ flt-glass-pane * {
       html.document.head.append(_canvasKitScript);
     }
 
-    _resizeSubscription = html.window.onResize.listen(_metricsDidChange);
+    if (html.window.visualViewport != null) {
+      _resizeSubscription =
+          html.window.visualViewport.onResize.listen(_metricsDidChange);
+    } else {
+      _resizeSubscription = html.window.onResize.listen(_metricsDidChange);
+    }
   }
 
   /// Called immediately after browser window metrics change.
+  ///
+  /// When there is a text editing going on in mobile devices, do not change
+  /// the physicalSize, change the [window.viewInsets]. See:
+  /// https://api.flutter.dev/flutter/dart-ui/Window/viewInsets.html
+  /// https://api.flutter.dev/flutter/dart-ui/Window/physicalSize.html
+  ///
+  /// Note: always check for rotations for a mobile device. Update the physical
+  /// size if the change is caused by a rotation.
   void _metricsDidChange(html.Event event) {
-    if (ui.window.onMetricsChanged != null) {
-      ui.window.onMetricsChanged();
+    if(isMobile && !window.isRotation() && textEditing.isEditing) {
+      window.computeOnScreenKeyboardInsets();
+      window.invokeOnMetricsChanged();
+    } else {
+      window._computePhysicalSize();
+      // When physical size changes this value has to be recalculated.
+      window.computeOnScreenKeyboardInsets();
+      window.invokeOnMetricsChanged();
     }
   }
 
@@ -441,6 +493,26 @@ flt-glass-pane * {
   void clearDom(html.Node node) {
     while (node.lastChild != null) {
       node.lastChild.remove();
+    }
+  }
+
+  static bool _ellipseFeatureDetected;
+
+  /// Draws CanvasElement ellipse with fallback.
+  static void ellipse(html.CanvasRenderingContext2D context,
+      double centerX, double centerY, double radiusX, double radiusY,
+      double rotation, double startAngle, double endAngle, bool antiClockwise) {
+    _ellipseFeatureDetected ??= js_util.getProperty(context, 'ellipse') != null;
+    if (_ellipseFeatureDetected) {
+      context.ellipse(centerX, centerY, radiusX, radiusY,
+          rotation, startAngle, endAngle, antiClockwise);
+    } else {
+      context.save();
+      context.translate(centerX, centerY);
+      context.rotate(rotation);
+      context.scale(radiusX, radiusY);
+      context.arc(0, 0, 1, startAngle, endAngle, antiClockwise);
+      context.restore();
     }
   }
 

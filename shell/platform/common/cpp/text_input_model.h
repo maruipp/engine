@@ -8,15 +8,14 @@
 #include <memory>
 #include <string>
 
-#include "rapidjson/document.h"
-
 namespace flutter {
 // Handles underlying text input state, using a simple ASCII model.
 //
 // Ignores special states like "insert mode" for now.
 class TextInputModel {
  public:
-  TextInputModel(int client_id, const rapidjson::Value& config);
+  TextInputModel(const std::string& input_type,
+                 const std::string& input_action);
   virtual ~TextInputModel();
 
   // Attempts to set the text state.
@@ -27,12 +26,18 @@ class TextInputModel {
                        size_t selection_extent,
                        const std::string& text);
 
-  // Adds a character.
+  // Adds a Unicode code point.
   //
   // Either appends after the cursor (when selection base and extent are the
-  // same), or deletes the selected characters, replacing the text with the
-  // character specified.
-  void AddCharacter(char32_t c);
+  // same), or deletes the selected text, replacing it with the given
+  // code point.
+  void AddCodePoint(char32_t c);
+
+  // Adds a UTF-16 text.
+  //
+  // Either appends after the cursor (when selection base and extent are the
+  // same), or deletes the selected text, replacing it with the given text.
+  void AddText(const std::u16string& text);
 
   // Deletes either the selection, or one character ahead of the cursor.
   //
@@ -72,11 +77,18 @@ class TextInputModel {
   // Returns true if the cursor could be moved.
   void MoveCursorToEnd();
 
-  // Returns the state in the form of a platform message.
-  std::unique_ptr<rapidjson::Document> GetState() const;
+  // Get the current text
+  std::string GetText() const;
 
-  // Id of the text input client.
-  int client_id() const { return client_id_; }
+  // The position of the cursor
+  int selection_base() const {
+    return static_cast<int>(selection_base_ - text_.begin());
+  }
+
+  // The end of the selection
+  int selection_extent() const {
+    return static_cast<int>(selection_extent_ - text_.begin());
+  }
 
   // Keyboard type of the client. See available options:
   // https://docs.flutter.io/flutter/services/TextInputType-class.html
@@ -89,12 +101,11 @@ class TextInputModel {
  private:
   void DeleteSelected();
 
-  std::u32string text_;
-  int client_id_;
+  std::u16string text_;
   std::string input_type_;
   std::string input_action_;
-  std::u32string::iterator selection_base_;
-  std::u32string::iterator selection_extent_;
+  std::u16string::iterator selection_base_;
+  std::u16string::iterator selection_extent_;
 };
 
 }  // namespace flutter

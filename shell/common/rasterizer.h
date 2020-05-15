@@ -13,10 +13,13 @@
 #include "flutter/flow/compositor_context.h"
 #include "flutter/flow/layers/layer_tree.h"
 #include "flutter/fml/closure.h"
-#include "flutter/fml/gpu_thread_merger.h"
 #include "flutter/fml/memory/weak_ptr.h"
+#include "flutter/fml/raster_thread_merger.h"
 #include "flutter/fml/synchronization/waitable_event.h"
-#include "flutter/shell/common/pipeline.h"
+#include "flutter/fml/time/time_delta.h"
+#include "flutter/fml/time/time_point.h"
+#include "flutter/lib/ui/snapshot_delegate.h"
+#include "flutter/shell/common/layer_tree_holder.h"
 #include "flutter/shell/common/surface.h"
 
 namespace flutter {
@@ -34,7 +37,7 @@ namespace flutter {
 /// and the on-screen render surface. The compositor context has all the GPU
 /// state necessary to render frames to the render surface.
 ///
-class Rasterizer final {
+class Rasterizer final : public SnapshotDelegate {
  public:
   //----------------------------------------------------------------------------
   /// @brief      Used to forward events from the rasterizer to interested
@@ -66,6 +69,10 @@ class Rasterizer final {
 
     /// Time limit for a smooth frame. See `Engine::GetDisplayRefreshRate`.
     virtual fml::Milliseconds GetFrameBudget() = 0;
+
+    /// Target time for the latest frame. See also `Shell::OnAnimatorBeginFrame`
+    /// for when this time gets updated.
+    virtual fml::TimePoint GetLatestFrameTargetTime() const = 0;
   };
 
   // TODO(dnfield): remove once embedders have caught up.
@@ -73,6 +80,11 @@ class Rasterizer final {
     void OnFrameRasterized(const FrameTiming&) override {}
     fml::Milliseconds GetFrameBudget() override {
       return fml::kDefaultFrameBudget;
+    }
+    // Returning a time in the past so we don't add additional trace
+    // events when exceeding the frame budget for other embedders.
+    fml::TimePoint GetLatestFrameTargetTime() const override {
+      return fml::TimePoint::FromEpochDelta(fml::TimeDelta::Zero());
     }
   };
 
@@ -172,7 +184,9 @@ class Rasterizer final {
   ///
   /// @return     The weak pointer to the rasterizer.
   ///
-  fml::WeakPtr<Rasterizer> GetWeakPtr() const;
+  fml::TaskRunnerAffineWeakPtr<Rasterizer> GetWeakPtr() const;
+
+  fml::WeakPtr<SnapshotDelegate> GetSnapshotDelegate() const;
 
   //----------------------------------------------------------------------------
   /// @brief      Sometimes, it may be necessary to render the same frame again
@@ -197,7 +211,7 @@ class Rasterizer final {
   ///             This is used as an optimization in cases where there are
   ///             external textures (video or camera streams for example) in
   ///             referenced in the layer tree. These textures may be updated at
-  ///             a cadence different from that of the the Flutter application.
+  ///             a cadence different from that of the Flutter application.
   ///             Flutter can re-render the layer tree with just the updated
   ///             textures instead of waiting for the framework to do the work
   ///             to generate the layer tree describing the same contents.
@@ -216,35 +230,27 @@ class Rasterizer final {
   flutter::TextureRegistry* GetTextureRegistry();
 
   //----------------------------------------------------------------------------
-  /// @brief      Takes the next item from the layer tree pipeline and executes
-  ///             the GPU thread frame workload for that pipeline item to render
-  ///             a frame on the on-screen surface.
+  /// @brief      Takes the latest item from the layer tree holder and executes
+  ///             the raster thread frame workload for that item to render a
+  ///             frame on the on-screen surface.
   ///
-  ///             Why does the draw call take a layer tree pipeline and not the
+  ///             Why does the draw call take a layer tree holder and not the
   ///             layer tree directly?
   ///
-  ///             The pipeline is the way book-keeping of frame workloads
-  ///             distributed across the multiple threads is managed. The
-  ///             rasterizer deals with the pipelines directly (instead of layer
-  ///             trees which is what it actually renders) because the pipeline
-  ///             consumer's workload must be accounted for within the pipeline
-  ///             itself. If the rasterizer took the layer tree directly, it
-  ///             would have to be taken out of the pipeline. That would signal
-  ///             the end of the frame workload and the pipeline would be ready
-  ///             for new frames. But the last frame has not been rendered by
-  ///             the frame yet! On the other hand, the pipeline must own the
-  ///             layer tree it renders because it keeps a reference to the last
-  ///             layer tree around till a new frame is rendered. So a simple
-  ///             reference wont work either. The `Rasterizer::DoDraw` method
-  ///             actually performs the GPU operations within the layer tree
-  ///             pipeline.
+  ///             The layer tree holder is a thread safe way to produce frame
+  ///             workloads from the UI thread and rasterize them on the raster
+  ///             thread. To account for scenarious where the UI thread
+  ///             continues to produce the frames while a raster task is queued,
+  ///             `Rasterizer::DoDraw` that gets executed on the raster thread
+  ///             must pick up the newest layer tree produced by the UI thread.
+  ///             If we were to pass the layer tree as opposed to the holder, it
+  ///             would result in stale frames being rendered.
   ///
   /// @see        `Rasterizer::DoDraw`
   ///
-  /// @param[in]  pipeline  The layer tree pipeline to take the next layer tree
-  ///                       to render from.
-  ///
-  void Draw(fml::RefPtr<Pipeline<flutter::LayerTree>> pipeline);
+  /// @param[in]  layer_tree_holder  The layer tree holder to take the latest
+  ///                                layer tree to render from.
+  void Draw(std::shared_ptr<LayerTreeHolder> layer_tree_holder);
 
   //----------------------------------------------------------------------------
   /// @brief      The type of the screenshot to obtain of the previously
@@ -351,7 +357,7 @@ class Rasterizer final {
   /// @param[in]  callback  The callback to execute when the next layer tree is
   ///                       rendered on-screen.
   ///
-  void SetNextFrameCallback(fml::closure callback);
+  void SetNextFrameCallback(const fml::closure& callback);
 
   //----------------------------------------------------------------------------
   /// @brief      Returns a pointer to the compositor context used by this
@@ -411,13 +417,25 @@ class Rasterizer final {
   std::unique_ptr<flutter::LayerTree> last_layer_tree_;
   // Set when we need attempt to rasterize the layer tree again. This layer_tree
   // has not successfully rasterized. This can happen due to the change in the
-  // thread configuration. This will be inserted to the front of the pipeline.
+  // thread configuration. This layer tree could be rasterized again if there
+  // are no newer ones.
   std::unique_ptr<flutter::LayerTree> resubmitted_layer_tree_;
   fml::closure next_frame_callback_;
   bool user_override_resource_cache_bytes_;
   std::optional<size_t> max_cache_bytes_;
   fml::WeakPtrFactory<Rasterizer> weak_factory_;
-  fml::RefPtr<fml::GpuThreadMerger> gpu_thread_merger_;
+  fml::RefPtr<fml::RasterThreadMerger> raster_thread_merger_;
+
+  // |SnapshotDelegate|
+  sk_sp<SkImage> MakeRasterSnapshot(sk_sp<SkPicture> picture,
+                                    SkISize picture_size) override;
+
+  // |SnapshotDelegate|
+  sk_sp<SkImage> ConvertToRasterImage(sk_sp<SkImage> image) override;
+
+  sk_sp<SkImage> DoMakeRasterSnapshot(
+      SkISize size,
+      std::function<void(SkCanvas*)> draw_callback);
 
   RasterStatus DoDraw(std::unique_ptr<flutter::LayerTree> layer_tree);
 

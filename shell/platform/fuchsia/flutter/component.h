@@ -25,10 +25,28 @@
 #include "flutter/common/settings.h"
 #include "flutter/fml/macros.h"
 
+#include "flutter_runner_product_configuration.h"
 #include "thread.h"
 #include "unique_fdio_ns.h"
 
 namespace flutter_runner {
+
+class Application;
+
+struct ActiveApplication {
+  std::unique_ptr<Thread> thread;
+  std::unique_ptr<Application> application;
+
+  ActiveApplication& operator=(ActiveApplication&& other) noexcept {
+    if (this != &other) {
+      this->thread.reset(other.thread.release());
+      this->application.reset(other.application.release());
+    }
+    return *this;
+  }
+
+  ~ActiveApplication() = default;
+};
 
 // Represents an instance of a Flutter application that contains one of more
 // Flutter engine instances.
@@ -41,12 +59,12 @@ class Application final : public Engine::Delegate,
   // Creates a dedicated thread to run the application and constructions the
   // application on it. The application can be accessed only on this thread.
   // This is a synchronous operation.
-  static std::pair<std::unique_ptr<Thread>, std::unique_ptr<Application>>
-  Create(TerminationCallback termination_callback,
-         fuchsia::sys::Package package,
-         fuchsia::sys::StartupInfo startup_info,
-         std::shared_ptr<sys::ServiceDirectory> runner_incoming_services,
-         fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller);
+  static ActiveApplication Create(
+      TerminationCallback termination_callback,
+      fuchsia::sys::Package package,
+      fuchsia::sys::StartupInfo startup_info,
+      std::shared_ptr<sys::ServiceDirectory> runner_incoming_services,
+      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller);
 
   // Must be called on the same thread returned from the create call. The thread
   // may be collected after.
@@ -60,6 +78,7 @@ class Application final : public Engine::Delegate,
 
  private:
   flutter::Settings settings_;
+  FlutterRunnerProductConfiguration product_config_;
   TerminationCallback termination_callback_;
   const std::string debug_label_;
   UniqueFDIONS fdio_ns_ = UniqueFDIONSCreate();

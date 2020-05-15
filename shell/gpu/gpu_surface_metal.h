@@ -19,11 +19,12 @@ namespace flutter {
 
 class GPUSurfaceMetal : public Surface {
  public:
-  GPUSurfaceMetal(GPUSurfaceDelegate* delegate, fml::scoped_nsobject<CAMetalLayer> layer);
   GPUSurfaceMetal(GPUSurfaceDelegate* delegate,
-                  sk_sp<GrContext> gr_context,
-                  fml::scoped_nsobject<CAMetalLayer> layer);
+                  fml::scoped_nsobject<CAMetalLayer> layer,
+                  sk_sp<GrContext> context,
+                  fml::scoped_nsprotocol<id<MTLCommandQueue>> command_queue);
 
+  // |Surface|
   ~GPUSurfaceMetal() override;
 
  private:
@@ -31,6 +32,7 @@ class GPUSurfaceMetal : public Surface {
   fml::scoped_nsobject<CAMetalLayer> layer_;
   sk_sp<GrContext> context_;
   fml::scoped_nsprotocol<id<MTLCommandQueue>> command_queue_;
+  GrMTLHandle next_drawable_ = nullptr;
 
   // |Surface|
   bool IsValid() override;
@@ -49,6 +51,8 @@ class GPUSurfaceMetal : public Surface {
 
   // |Surface|
   bool MakeRenderContextCurrent() override;
+
+  void ReleaseUnusedDrawableIfNecessary();
 
   FML_DISALLOW_COPY_AND_ASSIGN(GPUSurfaceMetal);
 };

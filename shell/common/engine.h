@@ -15,6 +15,7 @@
 #include "flutter/lib/ui/painting/image_decoder.h"
 #include "flutter/lib/ui/semantics/custom_accessibility_action.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
+#include "flutter/lib/ui/snapshot_delegate.h"
 #include "flutter/lib/ui/text/font_collection.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/lib/ui/window/viewport_metrics.h"
@@ -22,6 +23,8 @@
 #include "flutter/runtime/runtime_controller.h"
 #include "flutter/runtime/runtime_delegate.h"
 #include "flutter/shell/common/animator.h"
+#include "flutter/shell/common/platform_view.h"
+#include "flutter/shell/common/pointer_data_dispatcher.h"
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/run_configuration.h"
 #include "flutter/shell/common/shell_io_manager.h"
@@ -65,7 +68,7 @@ namespace flutter {
 ///           name and it does happen to be one of the older classes in the
 ///           repository.
 ///
-class Engine final : public RuntimeDelegate {
+class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
  public:
   //----------------------------------------------------------------------------
   /// @brief      Indicates the result of the call to `Engine::Run`.
@@ -158,7 +161,7 @@ class Engine final : public RuntimeDelegate {
     //--------------------------------------------------------------------------
     /// @brief      When the Flutter application has a message to send to the
     ///             underlying platform, the message needs to be forwarded to
-    ///             the platform on the the appropriate thread (via the platform
+    ///             the platform on the appropriate thread (via the platform
     ///             task runner). The engine delegates this task to the shell
     ///             via this method.
     ///
@@ -207,7 +210,7 @@ class Engine final : public RuntimeDelegate {
     ///             is not possible for the application to determine the total
     ///             time it took to render a specific frame. While the
     ///             layer-tree is constructed on the UI thread, it needs to be
-    ///             rendering on the GPU thread. Dart code cannot execute on
+    ///             rendering on the raster thread. Dart code cannot execute on
     ///             this thread. So any instrumentation about the frame times
     ///             gathered on this thread needs to be aggregated and sent back
     ///             to the UI thread for processing in Dart.
@@ -228,12 +231,18 @@ class Engine final : public RuntimeDelegate {
 
   //----------------------------------------------------------------------------
   /// @brief      Creates an instance of the engine. This is done by the Shell
-  ///             on the the UI task runner.
+  ///             on the UI task runner.
   ///
   /// @param      delegate           The object used by the engine to perform
   ///                                tasks that require access to components
   ///                                that cannot be safely accessed by the
   ///                                engine. This is the shell.
+  /// @param      dispatcher_maker   The callback provided by `PlatformView` for
+  ///                                engine to create the pointer data
+  ///                                dispatcher. Similar to other engine
+  ///                                resources, this dispatcher_maker and its
+  ///                                returned dispatcher is only safe to be
+  ///                                called from the UI thread.
   /// @param      vm                 An instance of the running Dart VM.
   /// @param[in]  isolate_snapshot   The snapshot used to create the root
   ///                                isolate. Even though the isolate is not
@@ -241,8 +250,6 @@ class Engine final : public RuntimeDelegate {
   ///                                created when the engine is created. This
   ///                                requires access to the isolate snapshot
   ///                                upfront.
-  /// @param[in]  shared_snapshot    The portion of the isolate snapshot shared
-  ///                                among multiple isolates.
   //  TODO(chinmaygarde): This is probably redundant now that the IO manager is
   //  it's own object.
   /// @param[in]  task_runners       The task runners used by the shell that
@@ -265,13 +272,16 @@ class Engine final : public RuntimeDelegate {
   ///                                GPU.
   ///
   Engine(Delegate& delegate,
+         const PointerDataDispatcherMaker& dispatcher_maker,
          DartVM& vm,
          fml::RefPtr<const DartSnapshot> isolate_snapshot,
-         fml::RefPtr<const DartSnapshot> shared_snapshot,
          TaskRunners task_runners,
+         const WindowData window_data,
          Settings settings,
          std::unique_ptr<Animator> animator,
-         fml::WeakPtr<IOManager> io_manager);
+         fml::WeakPtr<IOManager> io_manager,
+         fml::RefPtr<SkiaUnrefQueue> unref_queue,
+         fml::WeakPtr<SnapshotDelegate> snapshot_delegate);
 
   //----------------------------------------------------------------------------
   /// @brief      Destroys the engine engine. Called by the shell on the UI task
@@ -332,8 +342,7 @@ class Engine final : public RuntimeDelegate {
   ///
   /// @return     The result of the call to run the root isolate.
   ///
-  FML_WARN_UNUSED_RESULT
-  RunStatus Run(RunConfiguration configuration);
+  [[nodiscard]] RunStatus Run(RunConfiguration configuration);
 
   //----------------------------------------------------------------------------
   /// @brief      Tears down an existing root isolate, reuses the components of
@@ -352,15 +361,14 @@ class Engine final : public RuntimeDelegate {
   /// @return     Whether the restart was successful. If not, the engine and its
   ///             shell must be discarded.
   ///
-  FML_WARN_UNUSED_RESULT
-  bool Restart(RunConfiguration configuration);
+  [[nodiscard]] bool Restart(RunConfiguration configuration);
 
   //----------------------------------------------------------------------------
   /// @brief      Updates the asset manager referenced by the root isolate of a
   ///             Flutter application. This happens implicitly in the call to
   ///             `Engine::Run` and `Engine::Restart` as the asset manager is
   ///             referenced from the run configuration provided to those calls.
-  ///             In addition to the the `Engine::Run` and `Engine::Restart`
+  ///             In addition to the `Engine::Run` and `Engine::Restart`
   ///             calls, the tooling may need to update the assets available to
   ///             the application as the user adds them to their project. For
   ///             example, these assets may be referenced by code that is newly
@@ -398,25 +406,18 @@ class Engine final : public RuntimeDelegate {
   ///             will cause the jank in the Flutter application:
   ///             * The time taken by this method to create a layer-tree exceeds
   ///               on frame interval (for example, 16.66 ms on a 60Hz display).
-  ///             * The time take by this method to generate a new layer-tree
-  ///               causes the current layer-tree pipeline depth to change. To
-  ///               illustrate this point, note that maximum pipeline depth used
-  ///               by layer tree in the engine is 2. If both the UI and GPU
-  ///               task runner tasks finish within one frame interval, the
-  ///               pipeline depth is one. If the UI thread happens to be
-  ///               working on a frame when the GPU thread is still not done
-  ///               with the previous frame, the pipeline depth is 2. When the
-  ///               pipeline depth changes from 1 to 2, animations and UI
-  ///               interactions that cause the generation of the new layer tree
-  ///               appropriate for (frame_time + one frame interval) will
-  ///               actually end up at (frame_time + two frame intervals). This
-  ///               is not what code running on the UI thread expected would
-  ///               happen. This causes perceptible jank.
+  ///             * A new layer-tree produced by this method replaces a stale
+  ///               layer tree in `LayerTreeHolder`. See:
+  ///               `LayerTreeHolder::ReplaceIfNewer`. This could happen if
+  ///               rasterizer takes more than one frame interval to rasterize a
+  ///               layer tree. This would cause some frames to be skipped and
+  ///               could result in perceptible jank.
   ///
   /// @param[in]  frame_time  The point at which the current frame interval
   ///                         began. May be used by animation interpolators,
   ///                         physics simulations, etc..
   ///
+  /// @see         `LayerTreeHolder::ReplaceIfNewer`
   void BeginFrame(fml::TimePoint frame_time);
 
   //----------------------------------------------------------------------------
@@ -649,7 +650,7 @@ class Engine final : public RuntimeDelegate {
   ///                            timeline and allow grouping frames and input
   ///                            events into logical chunks.
   ///
-  void DispatchPointerDataPacket(const PointerDataPacket& packet,
+  void DispatchPointerDataPacket(std::unique_ptr<PointerDataPacket> packet,
                                  uint64_t trace_flow_id);
 
   //----------------------------------------------------------------------------
@@ -700,11 +701,38 @@ class Engine final : public RuntimeDelegate {
   // |RuntimeDelegate|
   FontCollection& GetFontCollection() override;
 
+  // |PointerDataDispatcher::Delegate|
+  void DoDispatchPacket(std::unique_ptr<PointerDataPacket> packet,
+                        uint64_t trace_flow_id) override;
+
+  // |PointerDataDispatcher::Delegate|
+  void ScheduleSecondaryVsyncCallback(const fml::closure& callback) override;
+
+  //----------------------------------------------------------------------------
+  /// @brief      Get the last Entrypoint that was used in the RunConfiguration
+  ///             when |Engine::Run| was called.
+  ///
+  const std::string& GetLastEntrypoint() const;
+
+  //----------------------------------------------------------------------------
+  /// @brief      Get the last Entrypoint Library that was used in the
+  ///             RunConfiguration when |Engine::Run| was called.
+  ///
+  const std::string& GetLastEntrypointLibrary() const;
+
  private:
   Engine::Delegate& delegate_;
   const Settings settings_;
   std::unique_ptr<Animator> animator_;
   std::unique_ptr<RuntimeController> runtime_controller_;
+
+  // The pointer_data_dispatcher_ depends on animator_ and runtime_controller_.
+  // So it should be defined after them to ensure that pointer_data_dispatcher_
+  // is destructed first.
+  std::unique_ptr<PointerDataDispatcher> pointer_data_dispatcher_;
+
+  std::string last_entry_point_;
+  std::string last_entry_point_library_;
   std::string initial_route_;
   ViewportMetrics viewport_metrics_;
   std::shared_ptr<AssetManager> asset_manager_;
@@ -712,6 +740,7 @@ class Engine final : public RuntimeDelegate {
   bool have_surface_;
   FontCollection font_collection_;
   ImageDecoder image_decoder_;
+  TaskRunners task_runners_;
   fml::WeakPtrFactory<Engine> weak_factory_;
 
   // |RuntimeDelegate|

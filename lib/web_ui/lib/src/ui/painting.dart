@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @dart = 2.6
 part of ui;
 
 // ignore: unused_element, Used in Shader assert.
@@ -13,7 +14,7 @@ bool _offsetIsValid(Offset offset) {
 }
 
 // ignore: unused_element, Used in Shader assert.
-bool _matrix4IsValid(Float64List matrix4) {
+bool _matrix4IsValid(Float32List matrix4) {
   assert(matrix4 != null, 'Matrix4 argument was null.');
   assert(matrix4.length == 16, 'Matrix4 must have 16 entries.');
   return true;
@@ -43,11 +44,11 @@ class Color {
   /// Bits 16-23 are the red value.
   /// Bits 8-15 are the green value.
   /// Bits 0-7 are the blue value.
-  const Color(int value) : _value = value & 0xFFFFFFFF;
+  const Color(int value) : this.value = value & 0xFFFFFFFF;
 
   /// Construct a color from the lower 8 bits of four integers.
   const Color.fromARGB(int a, int r, int g, int b)
-      : _value = (((a & 0xff) << 24) |
+      : value = (((a & 0xff) << 24) |
                 ((r & 0xff) << 16) |
                 ((g & 0xff) << 8) |
                 ((b & 0xff) << 0)) &
@@ -65,7 +66,7 @@ class Color {
   ///
   /// See also [fromARGB], which takes the opacity as an integer value.
   const Color.fromRGBO(int r, int g, int b, double opacity)
-      : _value = ((((opacity * 0xff ~/ 1) & 0xff) << 24) |
+      : value = ((((opacity * 0xff ~/ 1) & 0xff) << 24) |
                 ((r & 0xff) << 16) |
                 ((g & 0xff) << 8) |
                 ((b & 0xff) << 0)) &
@@ -77,23 +78,22 @@ class Color {
   /// Bits 16-23 are the red value.
   /// Bits 8-15 are the green value.
   /// Bits 0-7 are the blue value.
-  int get value => _value;
-  final int _value;
+  final int value;
 
   /// The alpha channel of this color in an 8 bit value.
-  int get alpha => (0xff000000 & _value) >> 24;
+  int get alpha => (0xff000000 & value) >> 24;
 
   /// The alpha channel of this color as a double.
   double get opacity => alpha / 0xFF;
 
   /// The red channel of this color in an 8 bit value.
-  int get red => (0x00ff0000 & _value) >> 16;
+  int get red => (0x00ff0000 & value) >> 16;
 
   /// The green channel of this color in an 8 bit value.
-  int get green => (0x0000ff00 & _value) >> 8;
+  int get green => (0x0000ff00 & value) >> 8;
 
   /// The blue channel of this color in an 8 bit value.
-  int get blue => (0x000000ff & _value) >> 0;
+  int get blue => (0x000000ff & value) >> 0;
 
   /// Returns a new color that matches this color with the alpha channel
   /// replaced with a (which ranges from 0 to 255).
@@ -227,6 +227,14 @@ class Color {
     }
   }
 
+  /// Returns an alpha value representative of the provided [opacity] value.
+  ///
+  /// The [opacity] value may not be null.
+  static int getAlphaFromOpacity(double opacity) {
+    assert(opacity != null);
+    return (opacity.clamp(0.0, 1.0) * 255).round();
+  }
+
   @override
   bool operator ==(dynamic other) {
     if (identical(this, other)) {
@@ -240,38 +248,7 @@ class Color {
   }
 
   @override
-  int get hashCode => _value.hashCode;
-
-  /// Converts color to a css compatible attribute value.
-  // webOnly
-  String toCssString() {
-    if ((0xff000000 & _value) == 0xff000000) {
-      return toCssStringRgbOnly();
-    } else {
-      final double alpha = ((_value >> 24) & 0xFF) / 255.0;
-      final StringBuffer sb = StringBuffer();
-      sb.write('rgba(');
-      sb.write(((_value >> 16) & 0xFF).toString());
-      sb.write(',');
-      sb.write(((_value >> 8) & 0xFF).toString());
-      sb.write(',');
-      sb.write((_value & 0xFF).toString());
-      sb.write(',');
-      sb.write(alpha.toString());
-      sb.write(')');
-      return sb.toString();
-    }
-  }
-
-  /// Returns the CSS value of this color without the alpha component.
-  ///
-  /// This is useful when painting shadows as on the Web shadow opacity combines
-  /// with the paint opacity.
-  // webOnly
-  String toCssStringRgbOnly() {
-    final String paddedValue = '00000${_value.toRadixString(16)}';
-    return '#${paddedValue.substring(paddedValue.length - 6)}';
-  }
+  int get hashCode => value.hashCode;
 
   @override
   String toString() {
@@ -684,7 +661,7 @@ enum BlendMode {
   /// ![](https://flutter.github.io/assets-for-api-docs/assets/dart-ui/blend_mode_colorDodge.png)
   colorDodge,
 
-  /// Divide the inverse of the destination by the the source, and inverse the result.
+  /// Divide the inverse of the destination by the source, and inverse the result.
   ///
   /// Inverting the components means that a fully saturated channel (opaque
   /// white) is treated as the value 0.0, and values normally treated as 0.0
@@ -915,44 +892,32 @@ enum Clip {
   antiAliasWithSaveLayer,
 }
 
-/// Private Paint context data used for recording canvas commands allowing
-/// Paint to be mutated post canvas draw operations.
-class PaintData {
-  BlendMode blendMode;
-  PaintingStyle style;
-  double strokeWidth;
-  StrokeCap strokeCap;
-  StrokeJoin strokeJoin;
-  bool isAntiAlias = true;
-  Color color;
-  Shader shader;
-  MaskFilter maskFilter;
-  FilterQuality filterQuality;
-  ColorFilter colorFilter;
-
-  // Internal for recording canvas use.
-  PaintData clone() {
-    return PaintData()
-      ..blendMode = blendMode
-      ..filterQuality = filterQuality
-      ..maskFilter = maskFilter
-      ..shader = shader
-      ..isAntiAlias = isAntiAlias
-      ..color = color
-      ..colorFilter = colorFilter
-      ..strokeWidth = strokeWidth
-      ..style = style
-      ..strokeJoin = strokeJoin
-      ..strokeCap = strokeCap;
-  }
-}
-
 /// A description of the style to use when drawing on a [Canvas].
 ///
 /// Most APIs on [Canvas] take a [Paint] object to describe the style
 /// to use for that operation.
-class Paint {
-  PaintData _paintData = PaintData();
+abstract class Paint {
+  /// Constructs an empty [Paint] object with all fields initialized to
+  /// their defaults.
+  factory Paint() =>
+      engine.experimentalUseSkia ? engine.SkPaint() : engine.SurfacePaint();
+
+  /// Whether to dither the output when drawing images.
+  ///
+  /// If false, the default value, dithering will be enabled when the input
+  /// color depth is higher than the output color depth. For example,
+  /// drawing an RGB8 image onto an RGB565 canvas.
+  ///
+  /// This value also controls dithering of [shader]s, which can make
+  /// gradients appear smoother.
+  ///
+  /// Whether or not dithering affects the output is implementation defined.
+  /// Some implementations may choose to ignore this completely, if they're
+  /// unable to control dithering.
+  ///
+  /// To ensure that dithering is consistently enabled for your entire
+  /// application, set this to true before invoking any drawing related code.
+  static bool enableDithering = false;
 
   /// A blend mode to apply when a shape is drawn or a layer is composited.
   ///
@@ -971,28 +936,14 @@ class Paint {
   ///  * [Canvas.saveLayer], which uses its [Paint]'s [blendMode] to composite
   ///    the layer when [restore] is called.
   ///  * [BlendMode], which discusses the user of [saveLayer] with [blendMode].
-  BlendMode get blendMode => _paintData.blendMode ?? BlendMode.srcOver;
-  set blendMode(BlendMode value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.blendMode = value;
-  }
-
-  BlendMode _blendMode;
+  BlendMode get blendMode;
+  set blendMode(BlendMode value);
 
   /// Whether to paint inside shapes, the edges of shapes, or both.
   ///
   /// If null, defaults to [PaintingStyle.fill].
-  PaintingStyle get style => _paintData.style ?? PaintingStyle.fill;
-  set style(PaintingStyle value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.style = value;
-  }
+  PaintingStyle get style;
+  set style(PaintingStyle value);
 
   /// How wide to make edges drawn when [style] is set to
   /// [PaintingStyle.stroke] or [PaintingStyle.strokeAndFill]. The
@@ -1000,78 +951,43 @@ class Paint {
   /// orthogonal to the direction of the path.
   ///
   /// The values null and 0.0 correspond to a hairline width.
-  double get strokeWidth => _paintData.strokeWidth ?? 0.0;
-  set strokeWidth(double value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeWidth = value;
-  }
+  double get strokeWidth;
+  set strokeWidth(double value);
 
   /// The kind of finish to place on the end of lines drawn when
   /// [style] is set to [PaintingStyle.stroke] or
   /// [PaintingStyle.strokeAndFill].
   ///
   /// If null, defaults to [StrokeCap.butt], i.e. no caps.
-  StrokeCap get strokeCap => _paintData.strokeCap;
-  set strokeCap(StrokeCap value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeCap = value;
-  }
+  StrokeCap get strokeCap;
+  set strokeCap(StrokeCap value);
 
   /// The kind of finish to use for line segment joins.
   /// [style] is set to [PaintingStyle.stroke] or
   /// [PaintingStyle.strokeAndFill]. Only applies to drawPath not drawPoints.
   ///
   /// If null, defaults to [StrokeCap.butt], i.e. no caps.
-  StrokeJoin get strokeJoin => _paintData.strokeJoin;
-  set strokeJoin(StrokeJoin value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeJoin = value;
-  }
+  StrokeJoin get strokeJoin;
+  set strokeJoin(StrokeJoin value);
 
   /// Whether to apply anti-aliasing to lines and images drawn on the
   /// canvas.
   ///
   /// Defaults to true. The value null is treated as false.
-  bool get isAntiAlias => _paintData.isAntiAlias;
-  set isAntiAlias(bool value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.isAntiAlias = value;
-  }
+  bool get isAntiAlias;
+  set isAntiAlias(bool value);
 
-  Color get color => _paintData.color;
-  set color(Color value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.color = value;
-  }
+  Color get color;
+  set color(Color value);
 
   /// Whether the colors of the image are inverted when drawn.
   ///
   /// Inverting the colors of an image applies a new color filter that will
   /// be composed with any user provided color filters. This is primarily
   /// used for implementing smart invert on iOS.
-  bool get invertColors {
-    return false;
-  }
+  bool get invertColors;
 
-  set invertColors(bool value) {}
-
-  Color _color = _defaultPaintColor;
-  static const Color _defaultPaintColor = Color(0xFF000000);
+  set invertColors(bool value);
 
   /// The shader to use when stroking or filling a shape.
   ///
@@ -1083,27 +999,15 @@ class Paint {
   ///  * [ImageShader], a shader that tiles an [Image].
   ///  * [colorFilter], which overrides [shader].
   ///  * [color], which is used if [shader] and [colorFilter] are null.
-  Shader get shader => _paintData.shader;
-  set shader(Shader value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.shader = value;
-  }
+  Shader get shader;
+  set shader(Shader value);
 
   /// A mask filter (for example, a blur) to apply to a shape after it has been
   /// drawn but before it has been composited into the image.
   ///
   /// See [MaskFilter] for details.
-  MaskFilter get maskFilter => _paintData.maskFilter;
-  set maskFilter(MaskFilter value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.maskFilter = value;
-  }
+  MaskFilter get maskFilter;
+  set maskFilter(MaskFilter value);
 
   /// Controls the performance vs quality trade-off to use when applying
   /// filters, such as [maskFilter], or when drawing images, as with
@@ -1111,14 +1015,8 @@ class Paint {
   ///
   /// Defaults to [FilterQuality.none].
   // TODO(ianh): verify that the image drawing methods actually respect this
-  FilterQuality get filterQuality => _paintData.filterQuality;
-  set filterQuality(FilterQuality value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.filterQuality = value;
-  }
+  FilterQuality get filterQuality;
+  set filterQuality(FilterQuality value);
 
   /// A color filter to apply when a shape is drawn or when a layer is
   /// composited.
@@ -1126,23 +1024,11 @@ class Paint {
   /// See [ColorFilter] for details.
   ///
   /// When a shape is being drawn, [colorFilter] overrides [color] and [shader].
-  ColorFilter get colorFilter => _paintData.colorFilter;
-  set colorFilter(ColorFilter value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.colorFilter = value;
-  }
+  ColorFilter get colorFilter;
+  set colorFilter(ColorFilter value);
 
-  // TODO(flutter_web): see https://github.com/flutter/flutter/issues/33605
-  double get strokeMiterLimit {
-    return null;
-  }
-
-  set strokeMiterLimit(double value) {
-    assert(value != null);
-  }
+  double get strokeMiterLimit;
+  set strokeMiterLimit(double value);
 
   /// The [ImageFilter] to use when drawing raster images.
   ///
@@ -1166,55 +1052,8 @@ class Paint {
   /// See also:
   ///
   ///  * [MaskFilter], which is used for drawing geometry.
-  ImageFilter get imageFilter {
-    // TODO(flutter/flutter#35156): Implement ImageFilter.
-    return null;
-  }
-
-  set imageFilter(ImageFilter value) {
-    // TODO(flutter/flutter#35156): Implement ImageFilter.
-  }
-
-  // True if Paint instance has used in RecordingCanvas.
-  bool _frozen = false;
-
-  // Marks this paint object as previously used.
-  PaintData get webOnlyPaintData {
-    // Flip bit so next time object gets mutated we create a clone of
-    // current paint data.
-    _frozen = true;
-    return _paintData;
-  }
-
-  @override
-  String toString() {
-    final StringBuffer result = StringBuffer();
-    String semicolon = '';
-    result.write('Paint(');
-    if (style == PaintingStyle.stroke) {
-      result.write('$style');
-      if (strokeWidth != null && strokeWidth != 0.0)
-        result.write(' $strokeWidth');
-      else
-        result.write(' hairline');
-      if (strokeCap != null && strokeCap != StrokeCap.butt)
-        result.write(' $strokeCap');
-      semicolon = '; ';
-    }
-    if (isAntiAlias != true) {
-      result.write('${semicolon}antialias off');
-      semicolon = '; ';
-    }
-    if (color != _defaultPaintColor) {
-      if (color != null)
-        result.write('$semicolon$color');
-      else
-        result.write('${semicolon}no color');
-      semicolon = '; ';
-    }
-    result.write(')');
-    return result.toString();
-  }
+  ImageFilter get imageFilter;
+  set imageFilter(ImageFilter value);
 }
 
 /// Base class for objects such as [Gradient] and [ImageShader] which
@@ -1230,8 +1069,6 @@ abstract class Shader {
 /// There are several types of gradients, represented by the various
 /// constructors on this class.
 abstract class Gradient extends Shader {
-  Gradient._() : super._();
-
   /// Creates a linear gradient from `from` to `to`.
   ///
   /// If `colorStops` is provided, `colorStops[i]` is a number from 0.0 to 1.0
@@ -1255,10 +1092,9 @@ abstract class Gradient extends Shader {
     List<Color> colors, [
     List<double> colorStops,
     TileMode tileMode = TileMode.clamp,
-    Float64List
-        matrix4, // TODO(flutter_web): see https://github.com/flutter/flutter/issues/32819
+    Float64List matrix4,
   ]) =>
-      engine.GradientLinear(from, to, colors, colorStops, tileMode);
+      engine.GradientLinear(from, to, colors, colorStops, tileMode, matrix4);
 
   /// Creates a radial gradient centered at `center` that ends at `radius`
   /// distance from the center.
@@ -1299,14 +1135,15 @@ abstract class Gradient extends Shader {
     _validateColorStops(colors, colorStops);
     // If focal is null or focal radius is null, this should be treated as a regular radial gradient
     // If focal == center and the focal radius is 0.0, it's still a regular radial gradient
+    final Float32List matrix32 = matrix4 != null ? engine.toMatrix32(matrix4) : null;
     if (focal == null || (focal == center && focalRadius == 0.0)) {
       return engine.GradientRadial(
-          center, radius, colors, colorStops, tileMode, matrix4);
+          center, radius, colors, colorStops, tileMode, matrix32);
     } else {
       assert(center != Offset.zero ||
           focal != Offset.zero); // will result in exception(s) in Skia side
       return engine.GradientConical(focal, focalRadius, center, radius, colors,
-          colorStops, tileMode, matrix4);
+          colorStops, tileMode, matrix32);
     }
   }
 
@@ -1346,7 +1183,7 @@ abstract class Gradient extends Shader {
     Float64List matrix4,
   ]) =>
       engine.GradientSweep(
-          center, colors, colorStops, tileMode, startAngle, endAngle, matrix4);
+          center, colors, colorStops, tileMode, startAngle, endAngle, engine.toMatrix32(matrix4));
 }
 
 /// Opaque handle to raw decoded image data (pixels).
@@ -1388,7 +1225,7 @@ abstract class Image {
 ///
 /// Instances of this class are used with [Paint.colorFilter] on [Paint]
 /// objects.
-class ColorFilter {
+abstract class ColorFilter {
   /// Creates a color filter that applies the blend mode given as the second
   /// argument. The source color is the one given as the first argument, and the
   /// destination color is the one from the layer being composited.
@@ -1396,50 +1233,83 @@ class ColorFilter {
   /// The output of this filter is then composited into the background according
   /// to the [Paint.blendMode], using the output of this filter as the source
   /// and the background as the destination.
-  const ColorFilter.mode(Color color, BlendMode blendMode)
-      : _color = color,
-        _blendMode = blendMode;
+  const factory ColorFilter.mode(Color color, BlendMode blendMode) =
+      engine.EngineColorFilter.mode;
 
-  /// Construct a color filter that transforms a color by a 4x5 matrix. The
-  /// matrix is in row-major order and the translation column is specified in
-  /// unnormalized, 0...255, space.
-  const ColorFilter.matrix(List<double> matrix)
-      : _color = null,
-        _blendMode = null;
+  /// Construct a color filter that transforms a color by a 4x5 matrix.
+  ///
+  /// Every pixel's color value, repsented as an `[R, G, B, A]`, is matrix
+  /// multiplied to create a new color:
+  ///
+  /// ```
+  /// | R' |   | a00 a01 a02 a03 a04 |   | R |
+  /// | G' | = | a10 a11 a22 a33 a44 | * | G |
+  /// | B' |   | a20 a21 a22 a33 a44 |   | B |
+  /// | A' |   | a30 a31 a22 a33 a44 |   | A |
+  /// ```
+  ///
+  /// The matrix is in row-major order and the translation column is specified
+  /// in unnormalized, 0...255, space. For example, the identity matrix is:
+  ///
+  /// ```
+  /// const ColorMatrix identity = ColorFilter.matrix(<double>[
+  ///   1, 0, 0, 0, 0,
+  ///   0, 1, 0, 0, 0,
+  ///   0, 0, 1, 0, 0,
+  ///   0, 0, 0, 1, 0,
+  /// ]);
+  /// ```
+  ///
+  /// ## Examples
+  ///
+  /// An inversion color matrix:
+  ///
+  /// ```
+  /// const ColorFilter invert = ColorFilter.matrix(<double>[
+  ///   -1,  0,  0, 0, 255,
+  ///    0, -1,  0, 0, 255,
+  ///    0,  0, -1, 0, 255,
+  ///    0,  0,  0, 1,   0,
+  /// ]);
+  /// ```
+  ///
+  /// A sepia-toned color matrix (values based on the [Filter Effects Spec](https://www.w3.org/TR/filter-effects-1/#sepiaEquivalent)):
+  ///
+  /// ```
+  /// const ColorFilter sepia = ColorFilter.matrix(<double>[
+  ///   0.393, 0.769, 0.189, 0, 0,
+  ///   0.349, 0.686, 0.168, 0, 0,
+  ///   0.272, 0.534, 0.131, 0, 0,
+  ///   0,     0,     0,     1, 0,
+  /// ]);
+  /// ```
+  ///
+  /// A greyscale color filter (values based on the [Filter Effects Spec](https://www.w3.org/TR/filter-effects-1/#grayscaleEquivalent)):
+  ///
+  /// ```
+  /// const ColorFilter greyscale = ColorFilter.matrix(<double>[
+  ///   0.2126, 0.7152, 0.0722, 0, 0,
+  ///   0.2126, 0.7152, 0.0722, 0, 0,
+  ///   0.2126, 0.7152, 0.0722, 0, 0,
+  ///   0,      0,      0,      1, 0,
+  /// ]);
+  /// ```
+  const factory ColorFilter.matrix(List<double> matrix) =
+      engine.EngineColorFilter.matrix;
 
   /// Construct a color filter that applies the sRGB gamma curve to the RGB
   /// channels.
-  const ColorFilter.linearToSrgbGamma()
-      : _color = null,
-        _blendMode = null;
+  const factory ColorFilter.linearToSrgbGamma() =
+      engine.EngineColorFilter.linearToSrgbGamma;
 
   /// Creates a color filter that applies the inverse of the sRGB gamma curve
   /// to the RGB channels.
-  const ColorFilter.srgbToLinearGamma()
-      : _color = null,
-        _blendMode = null;
-
-  final Color _color;
-  final BlendMode _blendMode;
-
-  @override
-  bool operator ==(dynamic other) {
-    if (other is! ColorFilter) {
-      return false;
-    }
-    final ColorFilter typedOther = other;
-    return _color == typedOther._color && _blendMode == typedOther._blendMode;
-  }
-
-  @override
-  int get hashCode => hashValues(_color, _blendMode);
+  const factory ColorFilter.srgbToLinearGamma() =
+      engine.EngineColorFilter.srgbToLinearGamma;
 
   List<dynamic> webOnlySerializeToCssPaint() {
     throw UnsupportedError('ColorFilter for CSS paint not yet supported');
   }
-
-  @override
-  String toString() => 'ColorFilter($_color, $_blendMode)';
 }
 
 /// Styles to use for blurs in [MaskFilter] objects.
@@ -1563,24 +1433,21 @@ enum FilterQuality {
 ///    this class.
 class ImageFilter {
   /// Creates an image filter that applies a Gaussian blur.
-  ImageFilter.blur({this.sigmaX = 0.0, this.sigmaY = 0.0})
-      : matrix4 = null,
-        filterQuality = FilterQuality.low;
+  factory ImageFilter.blur({double sigmaX = 0.0, double sigmaY = 0.0}) {
+    if (engine.experimentalUseSkia) {
+      return engine.SkImageFilter.blur(sigmaX: sigmaX, sigmaY: sigmaY);
+    }
+    return engine.EngineImageFilter.blur(sigmaX: sigmaX, sigmaY: sigmaY);
+  }
 
-  ImageFilter.matrix(this.matrix4, {this.filterQuality = FilterQuality.low})
-      : sigmaX = 0.0,
-        sigmaY = 0.0 {
+  ImageFilter.matrix(Float64List matrix4,
+      {FilterQuality filterQuality = FilterQuality.low}) {
     // TODO(flutter_web): add implementation.
     throw UnimplementedError(
         'ImageFilter.matrix not implemented for web platform.');
     //    if (matrix4.length != 16)
     //      throw ArgumentError('"matrix4" must have 16 entries.');
   }
-
-  final Float64List matrix4;
-  final FilterQuality filterQuality;
-  final double sigmaX;
-  final double sigmaY;
 }
 
 /// The format in which image bytes should be returned when using
@@ -1705,9 +1572,13 @@ class Codec {
 ///
 /// The returned future can complete with an error if the image decoding has
 /// failed.
-Future<Codec> instantiateImageCodec(Uint8List list,
-    {double decodedCacheRatioCap = double.infinity}) {
+Future<Codec> instantiateImageCodec(
+  Uint8List list, {
+  int targetWidth,
+  int targetHeight,
+}) {
   return engine.futurize((engine.Callback<Codec> callback) =>
+      // TODO: Implement targetWidth and targetHeight support.
       _instantiateImageCodec(list, callback, null));
 }
 
@@ -1730,13 +1601,17 @@ String _instantiateImageCodec(
   return null;
 }
 
-Future<Codec> webOnlyInstantiateImageCodecFromUrl(Uri uri) {
+Future<Codec> webOnlyInstantiateImageCodecFromUrl(Uri uri,
+    {engine.WebOnlyImageCodecChunkCallback chunkCallback}) {
   return engine.futurize((engine.Callback<Codec> callback) =>
-      _instantiateImageCodecFromUrl(uri, callback));
+      _instantiateImageCodecFromUrl(uri, chunkCallback, callback));
 }
 
-String _instantiateImageCodecFromUrl(Uri uri, engine.Callback<Codec> callback) {
-  callback(engine.HtmlCodec(uri.toString()));
+String _instantiateImageCodecFromUrl(
+    Uri uri,
+    engine.WebOnlyImageCodecChunkCallback chunkCallback,
+    engine.Callback<Codec> callback) {
+  callback(engine.HtmlCodec(uri.toString(), chunkCallback: chunkCallback));
   return null;
 }
 

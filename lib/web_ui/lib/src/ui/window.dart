@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 // Synced 2019-05-30T14:20:57.841444.
 
+// @dart = 2.6
 part of ui;
 
 /// Signature of callbacks that have no arguments and return no data.
@@ -73,18 +74,13 @@ enum AppLifecycleState {
   ///
   /// When the application is in this state, the engine will not call the
   /// [Window.onBeginFrame] and [Window.onDrawFrame] callbacks.
-  ///
-  /// Android apps in this state should assume that they may enter the
-  /// [suspending] state at any time.
   paused,
 
-  /// The application will be suspended momentarily.
+  /// The application is detached from view.
   ///
-  /// When the application is in this state, the engine will not call the
-  /// [Window.onBeginFrame] and [Window.onDrawFrame] callbacks.
-  ///
-  /// On iOS, this state is currently unused.
-  suspending,
+  /// When the application is in this state, the engine is running without
+  /// a platform UI.
+  detached,
 }
 
 /// A representation of distances for each of the four edges of a rectangle,
@@ -92,6 +88,8 @@ enum AppLifecycleState {
 /// around their user interface, as exposed by [Window.viewInsets] and
 /// [Window.padding]. View insets and padding are preferably read via
 /// [MediaQuery.of].
+///
+/// For the engine implementation of this class see the [engine.WindowPadding].
 ///
 /// For a generic class that represents distances around a rectangle, see the
 /// [EdgeInsets] class.
@@ -103,8 +101,12 @@ enum AppLifecycleState {
 ///  * [MediaQuery.of], for the preferred mechanism for accessing these values.
 ///  * [Scaffold], which automatically applies the padding in material design
 ///    applications.
-class WindowPadding {
-  const WindowPadding._({this.left, this.top, this.right, this.bottom});
+abstract class WindowPadding {
+  const factory WindowPadding._(
+      {double left,
+      double top,
+      double right,
+      double bottom}) = engine.WindowPadding;
 
   /// The distance from the left edge to the first unpadded pixel, in physical
   /// pixels.
@@ -482,19 +484,21 @@ class Locale {
   int get hashCode => hashValues(languageCode, scriptCode, countryCode);
 
   @override
-  String toString() {
+  String toString() => _rawToString('_');
+
+  // TODO(yjbanov): implement to match flutter native.
+  String toLanguageTag() => _rawToString('-');
+
+  String _rawToString(String separator) {
     final StringBuffer out = StringBuffer(languageCode);
     if (scriptCode != null) {
-      out.write('_$scriptCode');
+      out.write('$separator$scriptCode');
     }
     if (_countryCode != null) {
-      out.write('_$countryCode');
+      out.write('$separator$countryCode');
     }
     return out.toString();
   }
-
-  // TODO(yjbanov): implement to match flutter native.
-  String toLanguageTag() => '_';
 }
 
 /// The most basic interface to the host operating system's user interface.
@@ -627,16 +631,11 @@ abstract class Window {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
-  VoidCallback get onTextScaleFactorChanged => _onTextScaleFactorChanged;
-  VoidCallback _onTextScaleFactorChanged;
-  set onTextScaleFactorChanged(VoidCallback callback) {
-    _onTextScaleFactorChanged = callback;
-  }
+  VoidCallback get onTextScaleFactorChanged;
+  set onTextScaleFactorChanged(VoidCallback callback);
 
   /// The setting indicating the current brightness mode of the host platform.
-  /// If the platform has no preference, [platformBrightness] defaults to [Brightness.light].
-  Brightness get platformBrightness => _platformBrightness;
-  Brightness _platformBrightness = Brightness.light;
+  Brightness get platformBrightness;
 
   /// A callback that is invoked whenever [platformBrightness] changes value.
   ///
@@ -647,11 +646,8 @@ abstract class Window {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
-  VoidCallback get onPlatformBrightnessChanged => _onPlatformBrightnessChanged;
-  VoidCallback _onPlatformBrightnessChanged;
-  set onPlatformBrightnessChanged(VoidCallback callback) {
-    _onPlatformBrightnessChanged = callback;
-  }
+  VoidCallback get onPlatformBrightnessChanged;
+  set onPlatformBrightnessChanged(VoidCallback callback);
 
   /// A callback that is invoked whenever the [devicePixelRatio],
   /// [physicalSize], [padding], or [viewInsets] values change, for example
@@ -669,11 +665,8 @@ abstract class Window {
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    register for notifications when this is called.
   ///  * [MediaQuery.of], a simpler mechanism for the same.
-  VoidCallback get onMetricsChanged => _onMetricsChanged;
-  VoidCallback _onMetricsChanged;
-  set onMetricsChanged(VoidCallback callback) {
-    _onMetricsChanged = callback;
-  }
+  VoidCallback get onMetricsChanged;
+  set onMetricsChanged(VoidCallback callback);
 
   static const _enUS = const Locale('en', 'US');
 
@@ -712,6 +705,20 @@ abstract class Window {
   // TODO(flutter_web): Get the real locale from the browser.
   List<Locale> _locales = const [_enUS];
 
+  /// The locale that the platform's native locale resolution system resolves to.
+  ///
+  /// This value may differ between platforms and is meant to allow flutter locale
+  /// resoltion algorithms to into resolving consistently with other apps on the
+  /// device.
+  ///
+  /// This value may be used in a custom [localeListResolutionCallback] or used directly
+  /// in order to arrive at the most appropriate locale for the app.
+  ///
+  /// See [locales], which is the list of locales the user/device prefers.
+  Locale get platformResolvedLocale => _platformResolvedLocale;
+  // TODO(flutter_web): Compute the browser locale resolution and set it here.
+  Locale _platformResolvedLocale;
+
   /// A callback that is invoked whenever [locale] changes value.
   ///
   /// The framework invokes this callback in the same zone in which the
@@ -721,11 +728,8 @@ abstract class Window {
   ///
   ///  * [WidgetsBindingObserver], for a mechanism at the widgets layer to
   ///    observe when this callback is invoked.
-  VoidCallback get onLocaleChanged => _onLocaleChanged;
-  VoidCallback _onLocaleChanged;
-  set onLocaleChanged(VoidCallback callback) {
-    _onLocaleChanged = callback;
-  }
+  VoidCallback get onLocaleChanged;
+  set onLocaleChanged(VoidCallback callback);
 
   /// Requests that, at the next appropriate opportunity, the [onBeginFrame]
   /// and [onDrawFrame] callbacks be invoked.
@@ -761,11 +765,8 @@ abstract class Window {
   ///    scheduling of frames.
   ///  * [RendererBinding], the Flutter framework class which manages layout and
   ///    painting.
-  FrameCallback get onBeginFrame => _onBeginFrame;
-  FrameCallback _onBeginFrame;
-  set onBeginFrame(FrameCallback callback) {
-    _onBeginFrame = callback;
-  }
+  FrameCallback get onBeginFrame;
+  set onBeginFrame(FrameCallback callback);
 
   /// A callback that is invoked to report the [FrameTiming] of recently
   /// rasterized frames.
@@ -783,12 +784,8 @@ abstract class Window {
   /// decrease the overhead (as this is available in the release mode). The
   /// timing of any frame will be sent within about 1 second even if there are
   /// no later frames to batch.
-  TimingsCallback get onReportTimings => _onReportTimings;
-  TimingsCallback _onReportTimings;
-  Zone _onReportTimingsZone;
-  set onReportTimings(TimingsCallback callback) {
-    _onReportTimings = callback;
-  }
+  TimingsCallback get onReportTimings;
+  set onReportTimings(TimingsCallback callback);
 
   /// A callback that is invoked for each frame after [onBeginFrame] has
   /// completed and after the microtask queue has been drained. This can be
@@ -804,11 +801,8 @@ abstract class Window {
   ///    scheduling of frames.
   ///  * [RendererBinding], the Flutter framework class which manages layout and
   ///    painting.
-  VoidCallback get onDrawFrame => _onDrawFrame;
-  VoidCallback _onDrawFrame;
-  set onDrawFrame(VoidCallback callback) {
-    _onDrawFrame = callback;
-  }
+  VoidCallback get onDrawFrame;
+  set onDrawFrame(VoidCallback callback);
 
   /// A callback that is invoked when pointer data is available.
   ///
@@ -819,11 +813,8 @@ abstract class Window {
   ///
   ///  * [GestureBinding], the Flutter framework class which manages pointer
   ///    events.
-  PointerDataPacketCallback get onPointerDataPacket => _onPointerDataPacket;
-  PointerDataPacketCallback _onPointerDataPacket;
-  set onPointerDataPacket(PointerDataPacketCallback callback) {
-    _onPointerDataPacket = callback;
-  }
+  PointerDataPacketCallback get onPointerDataPacket;
+  set onPointerDataPacket(PointerDataPacketCallback callback);
 
   /// The route or path that the embedder requested when the application was
   /// launched.
@@ -872,11 +863,8 @@ abstract class Window {
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
-  VoidCallback get onSemanticsEnabledChanged => _onSemanticsEnabledChanged;
-  VoidCallback _onSemanticsEnabledChanged;
-  set onSemanticsEnabledChanged(VoidCallback callback) {
-    _onSemanticsEnabledChanged = callback;
-  }
+  VoidCallback get onSemanticsEnabledChanged;
+  set onSemanticsEnabledChanged(VoidCallback callback);
 
   /// A callback that is invoked whenever the user requests an action to be
   /// performed.
@@ -886,22 +874,15 @@ abstract class Window {
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
-  SemanticsActionCallback get onSemanticsAction => _onSemanticsAction;
-  SemanticsActionCallback _onSemanticsAction;
-  set onSemanticsAction(SemanticsActionCallback callback) {
-    _onSemanticsAction = callback;
-  }
+  SemanticsActionCallback get onSemanticsAction;
+  set onSemanticsAction(SemanticsActionCallback callback);
 
   /// A callback that is invoked when the value of [accessibilityFlags] changes.
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
-  VoidCallback get onAccessibilityFeaturesChanged =>
-      _onAccessibilityFeaturesChanged;
-  VoidCallback _onAccessibilityFeaturesChanged;
-  set onAccessibilityFeaturesChanged(VoidCallback callback) {
-    _onAccessibilityFeaturesChanged = callback;
-  }
+  VoidCallback get onAccessibilityFeaturesChanged;
+  set onAccessibilityFeaturesChanged(VoidCallback callback);
 
   /// Called whenever this window receives a message from a platform-specific
   /// plugin.
@@ -916,11 +897,8 @@ abstract class Window {
   ///
   /// The framework invokes this callback in the same zone in which the
   /// callback was set.
-  PlatformMessageCallback get onPlatformMessage => _onPlatformMessage;
-  PlatformMessageCallback _onPlatformMessage;
-  set onPlatformMessage(PlatformMessageCallback callback) {
-    _onPlatformMessage = callback;
-  }
+  PlatformMessageCallback get onPlatformMessage;
+  set onPlatformMessage(PlatformMessageCallback callback);
 
   /// Change the retained semantics data about this window.
   ///
@@ -976,27 +954,15 @@ abstract class Window {
   ///    scheduling of frames.
   ///  * [RendererBinding], the Flutter framework class which manages layout and
   ///    painting.
-  void render(Scene scene) {
-    if (engine.experimentalUseSkia) {
-      final engine.LayerScene layerScene = scene;
-      _rasterizer.draw(layerScene.layerTree);
-    } else {
-      engine.domRenderer.renderScene(scene.webOnlyRootElement);
-    }
-  }
-
-  final engine.Rasterizer _rasterizer = engine.experimentalUseSkia
-      ? engine.Rasterizer(engine.Surface((engine.SkCanvas canvas) {
-          engine.domRenderer.renderScene(canvas.htmlCanvas);
-          canvas.skSurface.callMethod('flush');
-        }))
-      : null;
+  void render(Scene scene);
 
   String get initialLifecycleState => _initialLifecycleState;
 
   String _initialLifecycleState;
 
   void setIsolateDebugName(String name) {}
+
+  ByteData getPersistentIsolateData() => null;
 }
 
 VoidCallback webOnlyScheduleFrameCallback;
@@ -1014,6 +980,7 @@ class AccessibilityFeatures {
   static const int _kDisableAnimationsIndex = 1 << 2;
   static const int _kBoldTextIndex = 1 << 3;
   static const int _kReduceMotionIndex = 1 << 4;
+  static const int _kHighContrastIndex = 1 << 5;
 
   // A bitfield which represents each enabled feature.
   final int _index;
@@ -1041,6 +1008,11 @@ class AccessibilityFeatures {
   /// Only supported on iOS.
   bool get reduceMotion => _kReduceMotionIndex & _index != 0;
 
+  /// The platform is requesting that UI be rendered with darker colors.
+  ///
+  /// Only supported on iOS.
+  bool get highContrast => _kHighContrastIndex & _index != 0;
+
   @override
   String toString() {
     final List<String> features = <String>[];
@@ -1058,6 +1030,9 @@ class AccessibilityFeatures {
     }
     if (reduceMotion) {
       features.add('reduceMotion');
+    }
+    if (highContrast) {
+      features.add('highContrast');
     }
     return 'AccessibilityFeatures$features';
   }
@@ -1093,11 +1068,12 @@ enum Brightness {
 // Unimplemented classes.
 // TODO(flutter_web): see https://github.com/flutter/flutter/issues/33614.
 class CallbackHandle {
-  CallbackHandle.fromRawHandle(this._handle);
+  CallbackHandle.fromRawHandle(this._handle)
+    : assert(_handle != null, "'_handle' must not be null.");
 
-  final int _handle;
+  final int/*!*/ _handle;
 
-  int toRawHandle() => _handle;
+  int/*!*/ toRawHandle() => _handle;
 
   @override
   bool operator ==(Object other) => identical(this, other);
@@ -1108,11 +1084,15 @@ class CallbackHandle {
 
 // TODO(flutter_web): see https://github.com/flutter/flutter/issues/33615.
 class PluginUtilities {
-  static CallbackHandle getCallbackHandle(Function callback) {
+  // This class is only a namespace, and should not be instantiated or
+  // extended directly.
+  factory PluginUtilities._() => throw UnsupportedError('Namespace');
+
+  static CallbackHandle/*?*/ getCallbackHandle(Function callback) {
     throw UnimplementedError();
   }
 
-  static Function getCallbackFromHandle(CallbackHandle handle) {
+  static Function/*?*/ getCallbackFromHandle(CallbackHandle handle) {
     throw UnimplementedError();
   }
 }
@@ -1124,18 +1104,22 @@ class ImageShader implements Shader {
 
 // TODO(flutter_web): probably dont implement this one.
 class IsolateNameServer {
+  // This class is only a namespace, and should not be instantiated or
+  // extended directly.
+  factory IsolateNameServer._() => throw UnsupportedError('Namespace');
+
   static dynamic lookupPortByName(String name) {
     assert(name != null, "'name' cannot be null.");
     throw UnimplementedError();
   }
 
-  static bool registerPortWithName(dynamic port, String name) {
+  static bool/*!*/ registerPortWithName(dynamic port, String name) {
     assert(port != null, "'port' cannot be null.");
     assert(name != null, "'name' cannot be null.");
     throw UnimplementedError();
   }
 
-  static bool removePortNameMapping(String name) {
+  static bool/*!*/ removePortNameMapping(String name) {
     assert(name != null, "'name' cannot be null.");
     throw UnimplementedError();
   }
@@ -1155,12 +1139,12 @@ enum FramePhase {
   /// See also [FrameTiming.buildDuration].
   buildFinish,
 
-  /// When the GPU thread starts rasterizing a frame.
+  /// When the raster thread starts rasterizing a frame.
   ///
   /// See also [FrameTiming.rasterDuration].
   rasterStart,
 
-  /// When the GPU thread finishes rasterizing a frame.
+  /// When the raster thread finishes rasterizing a frame.
   ///
   /// See also [FrameTiming.rasterDuration].
   rasterFinish,
@@ -1212,7 +1196,7 @@ class FrameTiming {
       _rawDuration(FramePhase.buildFinish) -
       _rawDuration(FramePhase.buildStart);
 
-  /// The duration to rasterize the frame on the GPU thread.
+  /// The duration to rasterize the frame on the raster thread.
   ///
   /// {@macro dart.ui.FrameTiming.fps_smoothness_milliseconds}
   /// {@macro dart.ui.FrameTiming.fps_milliseconds}
